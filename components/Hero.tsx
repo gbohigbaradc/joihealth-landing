@@ -33,14 +33,36 @@ export function Hero() {
       <div className="container" style={{ position: "relative", paddingTop: 40, paddingBottom: 130 }}>
         <div
           style={{
-            background: "#fff",
-            display: "inline-flex",
-            padding: "6px 14px",
-            borderRadius: 4,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
             marginBottom: 88,
           }}
         >
-          <img src="/logo.jpeg" alt="Joi Health" style={{ height: 30, width: "auto" }} />
+          <div
+            style={{
+              background: "#fff",
+              display: "inline-flex",
+              padding: "6px 14px",
+              borderRadius: 4,
+            }}
+          >
+            <img src="/logo.jpeg" alt="Joi Health" style={{ height: 30, width: "auto" }} />
+          </div>
+
+          
+            href="https://joihealth-hms-frontend.vercel.app/login"
+            style={{
+              fontSize: 14,
+              fontWeight: "bold",
+              color: "var(--text-on-navy)",
+              border: "1px solid rgba(255,255,255,0.4)",
+              borderRadius: 4,
+              padding: "8px 16px",
+            }}
+          >
+            Staff Login
+          </a>
         </div>
 
         <h1
