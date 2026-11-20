@@ -1,249 +1,225 @@
 # JoiHealth HMS
 
-Hospital / clinic management system for **Joi Health Polyclinics** (Lagos and Port Harcourt, Nigeria). It covers patient records, treatment plans, clinical notes, EMR, billing, laboratory, inventory, appointments, referrals, clinical meetings, weekly reports, a patient portal, an AI clinician assistant, and an AI and ML cardiac / PM&R rehabilitation module.
+A hospital management system with a built-in clinical safety layer, built end to end for a two-branch polyclinic (Lagos and Port Harcourt) and running in production.
 
-- **Production app:** https://hms.joihealth.ng (also reachable at https://joihealth-hms-frontend.vercel.app)
-- **API:** `joihealth-hms-api` on Google Cloud Run, region `europe-west1`
-- **Standby API:** `joihealth-hms` on Render (Frankfurt, free plan)
-- **Landing page:** separate project, `joihealth-landing` (Next.js on Vercel)
+It goes beyond record keeping: rules-based clinical checks, AI that explains but never decides, records that cannot be quietly rewritten, and a hosting setup designed to survive a provider failure.
 
-> Status as of 27 October 2026. Everything below marked "in progress" is not yet in production.
+> **Important:** this is clinical decision support, not a medical device. Every clinical threshold in the rules engine is a named default pending confirmation by the clinical team, and every AI output is a draft that a clinician must review.
 
----
+**Author:** Gboh-Igbara D. Charles, Data and Analytics, JoiHealth Polyclinics
 
-## 1. Architecture
+## Live sites
 
-```
-Browser
-  |
-Vercel (Next.js frontend, joihealth-hms-frontend)
-  |   NEXT_PUBLIC_API_URL
-Google Cloud Run (FastAPI, joihealth-hms-api)  <-- standby: Render (joihealth-hms)
-  |                     |
-Supabase (Postgres,     Vertex AI / Gemini (AI assistant, AI summaries,
-Auth, RLS)              code suggestions)
-  |
-Google Cloud Storage: joihealth-hms-backups (nightly dumps), joihealth-hms-lab-results
-```
+The same frontend is deployed at three addresses, so there is always one that opens. If one is slow or unreachable, try another.
 
-Key rules of the design:
+| Address | Role |
+| --- | --- |
+| [hms.joihealth.ng](https://hms.joihealth.ng) | Primary, on the clinic's custom domain |
+| [joihealth-hms-frontend.vercel.app](https://joihealth-hms-frontend.vercel.app) | The same app on Vercel's own address. It keeps working when the custom domain has DNS problems |
+| [joihealth-hms-frontend.onrender.com](https://joihealth-hms-frontend.onrender.com) | Backup copy on Render's free tier. The first visit can take up to a minute while it wakes |
 
-- The frontend talks **only** to the backend, through `API_BASE = process.env.NEXT_PUBLIC_API_URL` in `lib/api.ts`. There are no direct `supabase.from(...)` calls in the frontend.
-- The backend acts as the signed-in user: every request builds a Supabase client from the caller's JWT, so **Row Level Security (RLS) is the real permission layer**.
-- Money and derived totals (invoice totals, balances, low stock, requisition totals) are always computed on read, never stored.
-- Clinical records are mostly **write-once** (a correction is a new entry). Deletes are admin-only and, for rehab records, logged with a reason.
+Each address opens the public front page with the clinic's modules and facilities. From there, staff sign in at `/login` and patients use the secure portal at `/portal`.
 
-### Repositories and folders
-
-| Part | Folder (Cloud Shell) | Hosting |
-|---|---|---|
-| Backend (FastAPI) | `/home/joihealthpolyclinics/joihealth-backend-deploy/joihealth-backend` | Cloud Run (main), Render (standby) |
-| Frontend (Next.js 14, App Router, TypeScript) | `/home/joihealthpolyclinics/joihealth-hms-frontend` | Vercel |
-| Landing page (Next.js) | `~/joihealth-landing-deploy/joihealth-landing` | Vercel |
-
-The backend is a git repo (private GitHub repo `gbohigbaradc/joihealth-hms-backend`, branch `main`), which Render deploys from.
+Sign-in is restricted to clinic staff because the live system holds real patient records, so no demo credentials are published here. For a walkthrough of the screens, features and design decisions, see the [Showcase](#showcase) section.
 
 ---
 
-## 2. Modules
+## What makes it different
 
-### Clinical and operations
+1. **AI that explains, never decides.** A deterministic rules engine runs first. The AI writes a draft explanation. Nothing is saved until a clinician accepts it.
+2. **Records that cannot be quietly rewritten.** Clinical entries are write-once. Admin deletions need a reason and save a full snapshot to a log first.
+3. **One clinical core for every department.** Rules live as data, so new departments reuse the same engine, security model and records.
+4. **Built to survive failure.** A tested standby backend on a second provider, nightly backups and an offsite copy.
+5. **Imaging AI with guardrails, on a small budget.** Body-part checks, honest scores and a memory-tested deployment.
 
-| Module | What it does |
-|---|---|
-| **Overview dashboard** | Loads automatically after login. Role-aware KPI cards and charts (clinical, rehab, appointments per day, overdue appointments, per-branch comparison for admins, finance and inventory for admins and records officers). `GET /dashboard/summary` |
-| **Patients** | 17-field registration, HMO plan with "Other" fallback, search, PDF export, delete |
-| **Treatment plans** | Rich-text plan (TipTap editor), ICD / ICF / CPT / HCPCS codes, draft autosave, PDF |
-| **Clinician notes** | Immutable, create-only, linked to treatment plans |
-| **EMR** | Five write-once record types (vitals, diagnoses, allergies, immunizations, medical history), vitals range checks, medications, PDF with optional date range, admin-only entry delete |
-| **Appointments, Referrals, Doctors** | Scheduling, write-once referrals, doctor directory (delete refused if the doctor has appointments or referrals) |
-| **Laboratory** | Lab orders, result files in their own bucket, order sheet PDF |
-| **Billing** | Invoices, line items (edit / delete), payments, CPT / HCPCS per line, overpayment block, "Overpaid (credit)" label, invoice PDF, admin-only invoice delete |
-| **Inventory and Requisitions** | Stock movements, low-stock flags, report PDF, requisitions with PDF |
-| **Clinical meetings** | Minutes with attendees, previous-minutes link, patient cases, action items, autosave, finalise / reopen lock, minutes PDF |
-| **Weekly reports** | Patient weekly progress reports and staff weekly reports (one per person per week), PDF, edit stamps |
-| **Admin Panel** | Staff roles, deactivate / reactivate, bulk deactivate-all (except admin), reset password, permanent access removal for former staff, patient login list and removal, research datasets, legacy register |
+## Modules
 
-### Patient portal (view-only)
+| Area | What it covers |
+| --- | --- |
+| Patients and EMR | Registration, write-once vitals, diagnoses, allergies, immunizations, medications and history |
+| Treatment plans and notes | Rich-text plans, immutable clinician notes, ICD, ICF, CPT and HCPCS codes |
+| Billing | Invoices, line items, payments, overpayment blocking, PDF export |
+| Lab and imaging | Orders, result files, X-ray and MRI analysis with clinician review and sign-off |
+| Rehab | Pre-session screening, target zones, prescriptions, programme outcomes, consent records |
+| Cardio risk | Quick-entry risk assessment for the cardiology team |
+| Pharmacy | Formulary, drug-safety checks, batch and expiry stock, dispensing, returns, controlled drugs register |
+| Allied health | Diet and nutrition, physiotherapy, psychology and occupational therapy modules |
+| Operations | Appointments, referrals, inventory, requisitions, clinical meeting minutes |
+| Dashboards and reports | Role-specific dashboards and weekly progress reports |
 
-Patients get their own login. Staff switch access on per patient (`patients.portal_enabled` plus `portal_user_id`, admin-only). Patients see only their own rows through `my_patient_id()` read policies on a limited set of tables. Clinician notes, rehab and AI records, and consent records stay staff-only. Staff-only API routes require an active `staff` row; patient routes live under `/portal`.
+Every record type that needs one can be downloaded as a PDF, with the clinic letterhead and footer.
 
-### AI and ML
+## Architecture
 
-| Piece | Notes |
-|---|---|
-| **AI clinician assistant** (`/chat`) | Vertex AI Gemini with tool calling. Uses the clinician's own JWT for every read. AI drafts are saved only on an explicit click. Gated by `ai_assisted_care` consent, patient field allowlist, phone and email scrubbing, per-clinician rate limit, capped output tokens |
-| **Rehab rules engine** (`app/rehab_rules.py`, v1.1.x) | Pure functions: pre-session screening (green / amber / red / incomplete), exercise-response flags, Karvonen target zone with beta-blocker, pacemaker and AF handling, treadmill and cycle METs. Each result carries a plain-language "why" and the readings checked. **All thresholds are defaults pending clinical-lead confirmation** |
-| **Rehab records** | Medications, exercise sessions (stores engine version and flags), FITT prescriptions with 30-day ITP review, programme outcomes, care episodes, outcome measures (12 free-to-use measures), data-use consents, rehab PDF, admin delete with a logged reason |
-| **AI plain-language summary** | `POST /rehab/ai-summary` re-runs the engine server-side and sends only the engine result to Gemini (no patient identifiers). Text is withheld if it contains a figure the engine did not produce. Advisory only, never changes the engine status |
-| **Code suggestion assistant** | `POST /codes/suggest`: suggests ICD / ICF / CPT / HCPCS from a clinical note, requires an evidence quote, checks codes against reference lists, flags "did you mean" corrections. Nothing is added until a clinician clicks. CPT is always marked "verify" |
-| **Research datasets** | Admin-only, consent-filtered, de-identified Excel exports (episodes, outcome scores, sessions) with data dictionary. HMAC study codes, 5-year age bands, no free text, every download logged |
-
-**Safety principle:** the rules engine decides; the LLM only explains or suggests. A red or incomplete screen needs a written override reason before a session can go ahead.
-
----
-
-## 3. Roles and access
-
-| Role | Access |
-|---|---|
-| `admin` | Everything, including deletes, Admin Panel, research exports |
-| `records_officer` | Location-scoped create / edit / delete for appointments, billing, inventory, requisitions, referrals, patients |
-| `clinician` | Clinical modules, can read across patients, no destructive deletes |
-| Patient (portal) | Read-only view of own records |
-
-Deactivated or removed staff cannot use the HMS. Removed staff keep their name on records they authored (the staff row is kept, the sign-in is banned).
-
----
-
-## 4. Backend
-
-FastAPI app in `app/`. Routers live in `app/routers/`.
-
-**Auth pattern** (check an existing router, e.g. `inventory.py`, before writing a new one):
-
-```python
-from app.auth import AuthedRequest, get_current_clinician
-
-auth: AuthedRequest = Depends(get_current_clinician)
-auth.client.table("...")   # RLS applies as the caller
-auth.user_id
+```mermaid
+flowchart LR
+  B[Browser] --> V[Vercel<br/>Next.js frontend]
+  V --> C[Cloud Run<br/>FastAPI backend, primary]
+  V -.switch.-> R[Render<br/>FastAPI standby]
+  C --> S[(Supabase<br/>Postgres + RLS)]
+  R --> S
+  C --> G[Cloud Storage<br/>lab files and backups]
+  C --> I[Imaging service<br/>ONNX CNN + Grad-CAM]
+  R --> I
 ```
 
-`get_current_clinician` also requires an active staff row. Patient routes use `get_current_patient`.
+- The frontend never talks to the database directly. Every request goes through the API, which acts on behalf of the signed-in clinician.
+- Row-level security (RLS) in Postgres enforces access a second time, so an application bug cannot open a door the database does not allow.
+- The standby runs the same code against the same data. Switching is a frontend redeploy that points at the standby address.
 
-**RLS helpers** (SECURITY DEFINER, required to avoid Postgres `42P17` recursion; reuse them, never inline subqueries): `is_admin(uid)`, `is_records_officer_for(uid, loc)`, `is_active_records_officer(uid)`, `is_active_staff(uid)`, `my_patient_id()`.
+## Why it was built this way
 
-**Conventions**
+Every major choice had a reason. This is the reasoning, grouped by theme.
 
-- Delete endpoints return `{"deleted": true}` (never 204).
-- Routers that use `model_dump(mode="json")` pass new schema fields through automatically.
-- PDFs use reportlab and Pillow. Logo: `app/assets/logo.jpg`. Shared footer: `app/pdf_footer.py` (`draw_footer`, `FOOTER_BOTTOM_MARGIN`). Currency prints as `NGN 12,345.00` because Helvetica has no naira sign. Section headings use `keepWithNext` so they are not stranded at the foot of a page.
-- Rehab and care-record deletes need `?reason=` (3+ characters) and write a snapshot to `rehab_deletion_log` first. Consent records are deliberately not deletable.
+### Structure and security
 
-**Environment variables**
+| Decision | Why |
+| --- | --- |
+| The frontend only talks to the API, never the database | One place to check identity and permissions, secrets stay on the server, and every action can be logged and rate-limited |
+| Row-level security in Postgres as well | Defence in depth: a bug in the API cannot expose data the database does not allow |
+| FastAPI in Python | Rules engines, PDF generation and machine learning live in one language and one service, which suits a small data and AI team |
+| Supabase for data and sign-in | Managed Postgres with built-in authentication and RLS, so no database or auth servers to run and patch |
+| Next.js on Vercel | Quick deploys, with preview builds so changes can be checked before they go live |
 
-| Variable | Required | Notes |
-|---|---|---|
-| `SUPABASE_URL` | yes | |
-| `SUPABASE_ANON_KEY` | yes | |
-| `GOOGLE_CLOUD_PROJECT` | yes (Cloud Run) | Not set on the Render standby |
-| `SUPABASE_SERVICE_ROLE_KEY` | optional | Admin user management. Note the exact name, not `SUPABASE_SERVICE_KEY` |
-| `GOOGLE_CLOUD_LOCATION` | optional | `europe-west1` in production |
-| `ALLOWED_ORIGINS` | optional | Comma-separated: localhost, the Vercel URL and `https://hms.joihealth.ng`. Set with an alternate delimiter (`^@^`) because the value contains commas |
-| `RESEARCH_STUDY_KEY` | for research exports | HMAC secret for study codes. Keep it in a password manager (Secret Manager is the planned home) |
-| `AI_CONSENT_ENFORCED` | optional | `true` in production |
+### Resilience and cost
 
-Never commit keys or token files (`.gitignore` excludes token files, PDFs and `.bak` files).
+| Decision | Why |
+| --- | --- |
+| Cloud Run as the primary backend | Scales to zero when idle, and it reaches Gemini through Vertex AI without a stored API key |
+| Instance caps, a budget alert and free tiers where possible | Hosting cost stays low and predictable, so the clinic never faces a surprise bill from a traffic spike or a mistake |
+| A standby backend on a second provider (Render) | A billing or account problem at one provider would otherwise stop the API, the AI and the backups at once |
+| Automatic fallback in the frontend | Staff keep working during an outage without needing to know which server is up. A banner shows while on standby, and traffic returns to the primary on its own |
+| A backup copy of the frontend on Render | The custom domain has had outages outside the project's control, so staff always have another way in |
+| Nightly versioned backups plus an offsite copy | Versioning protects against bad writes. The offsite copy protects against losing the cloud account itself |
 
----
+### Records and data integrity
 
-## 5. Frontend
+| Decision | Why |
+| --- | --- |
+| Write-once clinical records | Medical history should never be silently altered, so a correction is a new entry and the trail stays intact |
+| Admin deletions need a reason and save a snapshot first | Deleting is sometimes legitimate, such as test data or entry mistakes, but it must stay accountable |
+| Totals computed on read, never stored | Stored totals can drift away from the line items they came from |
+| Overpayment blocking and vitals range checks | Mistakes are stopped at entry, such as an oxygen saturation of 999 or a diastolic pressure above the systolic. The ranges are wide on purpose, to catch typos and not to judge a patient |
+| Letterhead and a shared footer on every PDF | Documents leave the system as official clinic documents |
+| Admin-editable front page with built-in fallback text | The clinic can update its own page without a developer, and the page still loads if the backend is down |
 
-Next.js 14 (App Router), TypeScript, recharts for charts, TipTap for rich text.
+### Clinical safety and AI
 
-- `lib/api.ts` is the single API layer: `authedFetch` (adds the bearer token, surfaces string and FastAPI 422 array `detail` errors, returns `null` on 204), `authedDownload` for PDFs and Excel files, `authedUpload` for imports.
-- New API methods are inserted after an existing method using an exact-match anchor.
-- Rich text is stored as HTML and shown through `RichTextViewer.tsx` (sanitised with DOMPurify).
-- Medical code pickers: `CodeMultiSelect.tsx` (ICD, ICF, HCPCS, datasets in `public/data/*.json`) and `ManualCodeInput.tsx` (CPT, manual because CPT is AMA-copyrighted).
-- Role gating in the UI is a convenience only; the backend and RLS enforce it.
+| Decision | Why |
+| --- | --- |
+| Rules engine before the AI | Safety checks must be predictable, testable and explainable, which a language model is not |
+| AI drafts need an explicit click to save | Responsibility stays with the clinician, and nothing AI-written enters a record unreviewed |
+| The AI reads data with the clinician's own sign-in | It can only see what that clinician is allowed to see |
+| Drug and safety rules stored as approvable tables (draft, approved, retired) | Pharmacists can maintain and approve rules without a code release, and nothing unapproved is active |
+| Thresholds kept as named defaults | Clinical numbers stay visible and changeable, and it is clear they await clinical sign-off |
+| Per-patient consent flags | Using patient data for AI or model development needs a recorded decision, and a withdrawal must be respected |
+| Rate limits and token caps on the AI assistant | Keeps cost under control and limits abuse |
 
-Local build note: `npm run build` always fails while prerendering `/login` locally (no Supabase env vars). That is harmless if "Compiled successfully" appears first:
+### Imaging AI
+
+| Decision | Why |
+| --- | --- |
+| A separate imaging service | The model is too heavy for the main API and the free standby. Separating it keeps the core system light, and lab orders still work if imaging is unavailable |
+| ONNX Runtime for inference | A much smaller memory footprint than running a full deep-learning framework |
+| Operating-point scores with a reporting margin | The scores are not probabilities, so the report says so and lists only findings above the margin |
+| Mismatch checks that block sign-off | The AI once described a possible malignancy on an image of the wrong body part. A reviewer cannot sign off a report about the wrong image |
+| Imaging limited to admin, sub-admin and cardiologist | It is used occasionally, it is resource-heavy and it needs clinical oversight |
+
+## Roles
+
+Fourteen staff roles, each with its own access rules and landing page: admin, sub-admin, doctor, clinician, nurse, cardiologist, clinical psychologist, occupational therapist, pharmacist, pharmacy technician, records officer, accountant, procurement and general manager.
+
+## Clinical safety design
+
+- **Rules first.** Screening flags, target heart-rate zones and drug-safety checks come from deterministic code and data tables, not from a model.
+- **Explain-only AI.** The language model summarises and explains. It cannot save a clinical decision on its own.
+- **Decision log.** Each saved result records the engine version and the flags that fired.
+- **Consent tracking.** Per-patient consent history controls whether data may be used for AI-assisted care or model development.
+- **Named defaults.** Every threshold is a visible setting, not a buried constant.
+
+## Imaging AI
+
+- A gate refuses images that are not chest X-rays.
+- A chest CNN (exported to ONNX) scores 18 findings. Grad-CAM heatmaps are drawn only for findings that are actually reported.
+- Scores are operating-point values, where 0.5 is the model's own threshold. They are **not probabilities**, and every report says so.
+- Findings are listed only above a reporting margin. Weaker scores appear as one "near the model threshold" line.
+- MRI and other studies use a descriptive AI route, with body-part and study-type mismatch checks. Sign-off is blocked while a mismatch finding remains.
+- Access is limited to the admin, sub-admin and cardiologist roles.
+
+### Failure cases found and fixed
+
+| Problem | Fix |
+| --- | --- |
+| Claimed "no change since the previous exam" when no earlier report existed | The prompt now states explicitly when no earlier report exists and forbids comparison claims |
+| Described a possible malignancy on an image of the wrong body part | Mismatch checks, a malignancy-wording filter, and sign-off blocked on mismatch |
+| Different findings on two runs of the same image | Temperature 0 and a reliability note on descriptive reports |
+
+## Resilience
+
+- **Primary:** Google Cloud Run, with request limits and a per-clinician rate limit on the AI assistant.
+- **Standby:** a Render service with the same code and data. The imaging CNN stays on Cloud Run because it does not fit reliably in the standby's memory, so the standby calls it, and the descriptive route works without it.
+- **Backups:** nightly database dumps to versioned cloud storage with a 90-day lifecycle, plus an offsite copy.
+
+## Tech stack
+
+- **Frontend:** Next.js (React, TypeScript), TipTap rich-text editor, deployed on Vercel
+- **Backend:** FastAPI (Python), reportlab for PDFs, deployed on Cloud Run and Render
+- **Data and auth:** Supabase (Postgres, Auth, row-level security)
+- **AI:** Gemini through Vertex AI or an API key; ONNX Runtime for the imaging CNN
+- **Storage and jobs:** Google Cloud Storage, Cloud Run Jobs and Cloud Scheduler
+
+## Repository layout
+
+The system is split across three repositories:
+
+- `joihealth-hms-backend`: the FastAPI service (`app/routers`, rules engines, PDF code, Dockerfile)
+- `joihealth-hms-frontend`: the Next.js application
+- `joihealth-imaging-ai`: the ONNX imaging service
+
+## Running locally
+
+### Backend
 
 ```bash
-cd /home/joihealthpolyclinics/joihealth-hms-frontend && npm run build 2>&1 | grep -E "Compiled successfully|Failed to compile|Type error"
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
 ```
 
----
+Required environment variables: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `GOOGLE_CLOUD_PROJECT`.
+Optional: `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLOUD_LOCATION`, `ALLOWED_ORIGINS`, `IMAGING_AI_URL`, `IMAGING_AI_KEY`.
 
-## 6. Deploying
-
-Cloud Shell keeps files and git state between sessions but **not** installs, environment variables or CLI logins. Start every session with `cd`, and log in again where needed.
-
-**Backend (Cloud Run)**: always list services first and never assume the service name from the folder name.
+### Frontend
 
 ```bash
-cd /home/joihealthpolyclinics/joihealth-backend-deploy/joihealth-backend && gcloud run services list
+npm install
+npm run dev
 ```
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-backend-deploy/joihealth-backend && gcloud run deploy joihealth-hms-api --source . --region europe-west1 --quiet
-```
+Set `NEXT_PUBLIC_API_URL` to the backend address, plus the Supabase URL and anon key.
 
-**Frontend (Vercel)**
+A local `npm run build` can fail while prerendering `/login` if the Supabase variables are not set. That is expected without them.
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-hms-frontend && npx vercel login && npx vercel link
-```
+Never commit keys, tokens or `.env` files.
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-hms-frontend && npx vercel --prod
-```
+## Security and privacy
 
-Retry once on "fetch failed". The "Deployment Protection is on" note is harmless (it only affects command-line `curl`).
+- No patient data, credentials or keys belong in this repository.
+- Use synthetic demo records only when showing or testing the system.
+- Imaging uploads can carry identifiers burned into the pixels, so review images before exporting or sharing them.
 
-**Standby on Render**: Google stays the main system. To update the standby, commit and push the backend repo (short-lived fine-grained GitHub token, delete it afterwards); Render redeploys automatically.
+## Known limitations and roadmap
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-backend-deploy/joihealth-backend && git status
-```
+- Clinical thresholds and drug-safety rules need sign-off from the clinical team before they are treated as final.
+- The built-in ICD, ICF and HCPCS datasets are small samples. The full licensed sets still need to be sourced.
+- The imaging CNN is a screening aid, validated only on public sample images so far.
+- Hosting is being moved from personal accounts to company-owned accounts.
+- Next: pharmacy go-live and clinician training.
 
-**Switching the frontend to the standby** (about a minute each way):
+## Showcase
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-hms-frontend && npx vercel --prod --build-env NEXT_PUBLIC_API_URL=https://joihealth-hms.onrender.com
-```
+A 12-slide walkthrough of the build, `HMS_Knowledge_Showcase.pptx`, is available for presentations.
 
-```bash
-cd /home/joihealthpolyclinics/joihealth-hms-frontend && npx vercel --prod
-```
+## License
 
-On the standby the AI features show "temporarily unavailable" by design (no Google credentials). Everything else works against the same Supabase database.
-
----
-
-## 7. Editing conventions
-
-- Make edits with self-verifying Python scripts run from a Cloud Shell heredoc, asserting `content.count(anchor) == 1` before replacing. Do not paste edits into nano.
-- Appended backend endpoints go at the end of the router file; extra imports mid-file need `# noqa: E402`.
-- Back up before patching (`~/rehab-backups`, `.bak_*`).
-- Work in small steps with a quick check after each. Run each pasted block once and wait for the output.
-
----
-
-## 8. Backups and data safety
-
-- **Nightly backups:** Cloud Run Job plus Cloud Scheduler (02:00 UTC) writes to the GCS bucket `joihealth-hms-backups` (versioning on, 90-day lifecycle).
-- **Lab results:** bucket `joihealth-hms-lab-results` (no deletion lifecycle).
-- **Offsite copies:** take periodic downloads of both buckets from Cloud Shell.
-- **Cost guardrails:** Cloud Run `maxScale` 3, min instances 0; Gemini output tokens capped; per-clinician chat rate limit; a $1 monthly budget alert exists (alert only, not a spend cap).
-- **Privacy:** NDPA applies. The LLM calls send de-identified engine results or scrubbed text only; AI features require the patient's `ai_assisted_care` consent; research exports include only patients with a current `model_development` consent.
-
----
-
-## 9. Testing
-
-Use the dedicated "Test Patient" record and the three test accounts (admin, records officer, plain clinician) for every production check. Test entries carry notes starting with `TEST ENTRY`. Browser-check each change as a plain clinician and as an admin. Credentials are kept in a password manager, not in this repository.
-
----
-
-## 10. Known open items
-
-- Revoke any leaked GitHub and Vercel tokens; move `RESEARCH_STUDY_KEY` to Secret Manager.
-- Delete the orphaned duplicate `joihealth-backend` Cloud Run service (us-central1, already locked).
-- Upgrade Next.js (14.2.15 has a published vulnerability; the fix is a major-version upgrade).
-- Clinical lead to confirm rehab thresholds and privacy steps before real patients are entered.
-- Full ICD-10 / ICF code sets still to source (ICD-10 edition not yet chosen). The full CMS HCPCS set (about 7,400 active codes) is built and **in progress**, not yet deployed.
-- Planned next LLM pieces: billing validator (rules first, LLM only explains flags), then SOAP / session note drafting.
-- Rehab screens not yet in the UI: consent already exists; still to confirm every create form (medications, prescription, outcome, episode) is verified end to end by clinicians.
-- Billing account hardening on Google Cloud: second billing admin and a backup payment method.
-- Doctor edits should be admin-only; old singular code columns (`icd_code`, `icf_code`, `hcpcs_code`) can be dropped once the new ones are confirmed.
-- Some Cloud Shell and browser oddities seen with extensions (duplicate "Today session" cards, a parked exercise AI button) are unresolved; test in a private window first.
-
----
-
-## 11. Maintainer
-
-Built and maintained by **Gboh-Igbara D. Charles** (Information Officer, Data & Analytics, JoiHealth Polyclinics).
-
-Project documents: *Engine Room* (technical blueprint) and *Business Suit* (business proposal).
+To be confirmed with JoiHealth Polyclinics. Until then, all rights are reserved.
