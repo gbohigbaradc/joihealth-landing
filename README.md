@@ -6,7 +6,7 @@ It goes beyond record keeping: rules-based clinical checks, AI that explains but
 
 > **Important:** this is clinical decision support, not a medical device. Every clinical threshold in the rules engine is a named default pending confirmation by the clinical team, and every AI output is a draft that a clinician must review.
 
-**Author:** Gboh-Igbara D. Charles, Data and Analytics, JoiHealth Polyclinics
+**Author:** Gboh-Igbara D. Charles, Data Scientist and AI Engineer. Built at JoiHealth Polyclinics.
 
 ## Live sites
 
@@ -218,7 +218,10 @@ Never commit keys, tokens or `.env` files.
 
 ## Showcase
 
-A 12-slide walkthrough of the build, `HMS_Knowledge_Showcase.pptx`, is available for presentations.
+A 12-slide walkthrough of the build:
+
+- [View the slides (PDF)](HMS_Knowledge_Showcase.pdf), which opens right in the browser
+- [Download the editable PowerPoint](HMS_Knowledge_Showcase.pptx)
 
 ## License
 
